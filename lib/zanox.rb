@@ -2,7 +2,8 @@ require 'rubygems'
 
 module Zanox
   module API
-    require 'soap/wsdlDriver'
+    require 'xmlrpc/client'
+    require 'savon'
     require 'base64'
     require 'hmac-sha1'
     require 'digest/md5'
@@ -23,15 +24,17 @@ module Zanox
         unless Zanox::API::Session.secret_key.nil?
           timestamp = Zanox::API.get_timestamp
           nonce = Zanox::API.generate_nonce
-          signature = Zanox::API.create_signature(Zanox::API::Session.secret_key, "publisherservice"+method.downcase + timestamp + nonce)
-          options.merge!(:timestamp=>timestamp, :nonce=>nonce, :signature=>signature)
+          signature = Zanox::API.create_signature(Zanox::API::Session.secret_key, "publisherservice" +method.downcase+  timestamp+ nonce)
+          #options.merge!(:timestamp=>timestamp, :nonce=>nonce, :signature=>signature)
         end
       
         @wsdl = 'http://api.zanox.com/wsdl/2011-03-01/' unless !!@wsdl
-        @driver = SOAP::WSDLDriverFactory.new(@wsdl).create_rpc_driver unless !!@driver
+        @driver = Savon.client(wsdl: 'http://api.zanox.com/wsdl/2011-03-01')
         @driver.wiredump_dev = STDOUT if $DEBUG
         @driver.options['protocol.http.ssl_config.verify_mode'] = OpenSSL::SSL::VERIFY_NONE if $DEBUG
-        @driver.method(method.to_sym).call(options)
+        
+        @driver.call(:search_products, :message=>options)
+        
       rescue Exception => e
         puts
         puts "ERROR"
@@ -44,11 +47,12 @@ module Zanox
     end
     
     def self.get_timestamp
-      Time.new.gmtime.strftime("%Y-%m-%dT%H:%M:%S.000Z").to_s
+     # Time.now.utc.strftime("%a, %d %b %Y %H:%M:%S %Z").to_s
+      Time.new.gmtime.strftime("%a, %d %b %Y %H:%M:%S GMT").to_s
     end
-    
+   
     def self.create_signature(secret_key, string2sign)
-      Base64.encode64(HMAC::SHA1.new(secret_key).update(string2sign).digest)[0..-2]
+      Base64.encode64(OpenSSL::HMAC::digest(OpenSSL::Digest::SHA1.new, secret_key, string2sign)).chomp
     end
     
     module Session
@@ -104,12 +108,11 @@ module Zanox
           signature = Zanox::API.create_signature(Zanox::API.secret_key, "connectservice"+method.downcase + timestamp + nonce)
           options.merge!(:timestamp=>timestamp, :nonce=>nonce, :signature=>signature)
         end
-      
-        @wsdl = 'https://auth.zanox-affiliate.de/wsdl/2010-02-01' unless !!@wsdl
-        @driver = SOAP::WSDLDriverFactory.new(@wsdl).create_rpc_driver unless !!@driver
+        @driver =Savon.client(wsdl: 'https://auth.zanox-affiliate.de/wsdl/2010-02-01')
         @driver.wiredump_dev = STDOUT if $DEBUG
         @driver.options['protocol.http.ssl_config.verify_mode'] = OpenSSL::SSL::VERIFY_NONE if $DEBUG
-        @driver.method(method.to_sym).call(options)
+        
+        @driver.call(method.to_sym,options)
       rescue Exception => e
         puts
         puts "ERROR"
@@ -223,7 +226,7 @@ module Zanox
         api_method = 'search'+self.pluralize
         class_name.sub!(/\b\w/) { $&.downcase }
         queries.each do |query|
-          options.merge!(:query=>query)
+          options.merge!(:q=>query)
           response = Zanox::API.request(api_method, options)
           m1_name = (class_name+'Items').to_sym
           m2_name = (class_name+'Item').to_sym
